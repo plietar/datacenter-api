@@ -7,20 +7,13 @@
   outputs = inputs: inputs.flake-parts.lib.mkFlake { inherit inputs; } {
     systems = [ "x86_64-linux" ];
     perSystem = { pkgs, self', ... }: {
-      packages.default = pkgs.buildGoModule {
+      packages.default = pkgs.rustPlatform.buildRustPackage {
         name = "datacenter-api";
         src = ./.;
-        vendorHash = "sha256-3CjXa2QNQPjCm3KJ1f8Z8kh/VH0Orf3KOAPH5RXffqg=";
-        nativeBuildInputs = [ pkgs.makeBinaryWrapper ];
+        cargoLock.lockFile = ./Cargo.lock;
+
         postConfigure = ''
           cp -rT ${self'.packages.web} web/dist
-        '';
-
-        GOFLAGS = [ "-tags=embed" ];
-
-        postInstall = ''
-          wrapProgram $out/bin/datacenter-api \
-              --set-default GIN_MODE release
         '';
       };
 
@@ -38,7 +31,11 @@
 
       devShells.default = pkgs.mkShell {
         inputsFrom = [ self'.packages.default self'.packages.web ];
-        nativeBuildInputs = [ pkgs.prefetch-npm-deps ];
+        nativeBuildInputs = [
+          pkgs.prefetch-npm-deps
+          pkgs.cargo
+          pkgs.rustfmt
+        ];
       };
     };
   };

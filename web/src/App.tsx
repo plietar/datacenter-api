@@ -8,20 +8,23 @@ const fetcher = (url: string) => fetch(url).then(res => res.json());
 async function setPowerState(hostname: string, state: boolean) {
   await fetch(`${import.meta.env.VITE_API_URL || ""}/host/${hostname}`, {
     method: "PUT",
-    body: JSON.stringify({ Power: state }),
+    body: JSON.stringify({ power: state }),
+    headers: {
+      'Content-Type': 'application/json'
+    },
   });
 }
 
-function hostRow(data: any) {
-  return (<TableRow key={data.Hostname}>
-    <TableCell>{data.Hostname}</TableCell>
-    <TableCell>{data.Error ? "Unavailable" : (data.PowerIsOn ? "On" : "Off")}</TableCell>
+function hostRow(hostname: string, data: any) {
+  return (<TableRow key={hostname}>
+    <TableCell>{hostname}</TableCell>
+    <TableCell>{data.error ? "Unavailable" : (data.power_is_on ? "On" : "Off")}</TableCell>
     <TableCell>
-      <Tooltip title={data.PowerIsOn ? "Power Off" : "Power On"}>
+      <Tooltip title={data.power_is_on ? "Power Off" : "Power On"}>
         <IconButton
-          disabled={!!data.Error}
-          color={data.PowerIsOn ? "error" : "success"}
-          onClick={async () => { await setPowerState(data.Hostname, !data.PowerIsOn); } }
+          disabled={!!data.error}
+          color={data.power_is_on ? "error" : "success"}
+          onClick={async () => { await setPowerState(hostname, !data.power_is_on); } }
         >
           <PowerSettingsNewIcon/>
         </IconButton>
@@ -44,7 +47,10 @@ function App() {
           </TableRow>
         </TableHead>
         <TableBody>
-          { data && Object.values(data.hosts).map(hostRow) }
+          { data &&
+              Object.entries(data.hosts)
+                    .toSorted(([k1, _v1], [k2, _v2]) => k1.localeCompare(k2))
+                    .map(([k,v]) => hostRow(k,v)) }
         </TableBody>
       </Table>
     </>
