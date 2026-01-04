@@ -13,7 +13,6 @@ use tracing::Level;
 
 use crate::config::Config;
 use crate::hosts::{ipmi_host_put_handler, ipmi_hosts_handler};
-use crate::pxe::{pxe_boot_handler, pxe_file_handler};
 
 #[derive(rust_embed::RustEmbed, Clone)]
 #[folder = "web/dist"]
@@ -55,10 +54,9 @@ async fn main() -> anyhow::Result<()> {
 
     let serve_assets = axum_embed::ServeEmbed::<Assets>::new();
     let mut app = Router::new()
-        .route("/pxe/v1/boot/{mac}", get(pxe_boot_handler))
-        .route("/pxe/file/{hash}/{*path}", get(pxe_file_handler))
         .route("/hosts", get(ipmi_hosts_handler))
         .route("/host/{hostname}", put(ipmi_host_put_handler))
+        .nest("/pxe", pxe::router(config.clone()))
         .fallback_service(serve_assets)
         .layer(
             TraceLayer::new_for_http()

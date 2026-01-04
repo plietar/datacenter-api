@@ -1,5 +1,11 @@
 use crate::binary_cache::{self, BinaryCache};
+use std::sync::Arc;
 
+use base64::{engine::general_purpose::URL_SAFE, Engine as _};
+        use sha2::Sha256;
+        use hmac::{Hmac, Mac};
+
+use axum::extract::Query;
 use crate::config::Config;
 use anyhow::bail;
 use axum::Json;
@@ -12,13 +18,13 @@ use url::Url;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct LastRevision {
+pub struct LastRevision {
     pub store_path: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct CachixPin {
+pub struct CachixPin {
     pub name: String,
     pub last_revision: LastRevision,
 }
@@ -106,50 +112,87 @@ async fn download_file(
     }
 }
 
-pub async fn pxe_boot_handler(
+struct PxeState {
+    caches: Vec<BinaryCache>,
+    client: reqwest::Client,
+    config: Config,
+    secret: Vec<u8>,
+}
+type Pxe = Arc<PxeState>;
+
+
+impl PxeState {
+    fn mac_url(&self, hash: &str, path: &str) -> Hmac<Sha256> {
+        let mut mac = Hmac::new_from_slice(&self.secret).expect("Creating HMAC cannot fail");
+        mac.update(hash.as_bytes()); // TODO, bad
+        mac.update(path.as_bytes()); // TODO, bad
+        mac
+    }
+
+    fn file_url(&self, hash: &str, path: &str) -> String {
+        let key = self.mac_url(hash, path).finalize().into_bytes();
+        format!("/pxe/file/{hash}/{path}?key={}", URL_SAFE.encode(key))
+    }
+
+    fn verify_file_url(&self, hash: &str, path: &str, key: &str) -> anyhow::Result<()> {
+        let key = URL_SAFE.decode(key)?;
+        self.mac_url(hash, path).verify_slice(&key)?;
+            Ok(())
+    }
+}
+
+async fn handler_boot_request(
     Path(mac): Path<String>,
-    State(config): State<Config>,
+    State(state): State<Pxe>,
 ) -> Json<serde_json::Value> {
     let client = reqwest::Client::new();
 
     let url = Url::parse("https://app.cachix.org/api/v1/cache/")
         .unwrap()
-        .join(&format!("{}/", &config.pxe.cachix))
+        .join(&format!("{}/", &state.config.pxe.cachix))
         .unwrap();
 
-    let Some((hostname, _host)) = config.find_host_by_mac(&mac) else {
+    let Some((hostname, _host)) = state.config.find_host_by_mac(&mac) else {
         todo!();
     };
 
     let hash = find_cachix_pin(&client, &url, hostname).await.unwrap();
 
-    let caches = config
-        .pxe
-        .caches
-        .iter()
-        .map(|url| BinaryCache::new(url.clone()))
-        .collect::<Vec<_>>();
-    let cmdline = download_file(&client, &caches, &hash, "cmdline")
+    let cmdline = download_file(&state.client, &state.caches, &hash, "cmdline")
         .await
         .unwrap();
 
     Json(serde_json::json! ({
         "cmdline": String::from_utf8(cmdline).unwrap().trim(),
-        "kernel": format!("/pxe/file/{hash}/bzImage"),
-        "initrd": [format!("/pxe/file/{hash}/initrd")],
+        "kernel": state.file_url(&hash, "bzImage"),
+        "initrd": state.file_url(&hash, "initrd"),
     }))
 }
 
-pub async fn pxe_file_handler(
+#[derive(Deserialize)]
+struct KeyParam { key: String, }
+
+async fn handler_file(
     Path((hash, path)): Path<(String, String)>,
-    State(config): State<Config>,
+    State(state): State<Pxe>,
+    Query(KeyParam { key }): Query<KeyParam>,
 ) -> Vec<u8> {
-    let client = reqwest::Client::new();
-    let caches = config
-        .pxe
-        .caches
-        .iter()
-        .map(|url| BinaryCache::new(url.clone()))
-        .collect::<Vec<_>>();
-    download_file(&client, &caches, &hash, &path).await.unwrap()
+    state.verify_file_url(&hash, &path, &key).unwrap();
+    download_file(&state.client, &state.caches, &hash, &path).await.unwrap()
+}
+
+pub fn router<S>(config: Config) -> axum::Router<S> {
+    use axum::routing::get;
+
+    let state = Pxe::new(PxeState {
+        client: reqwest::Client::new(),
+        caches: config .pxe .caches .iter() .map(|url| BinaryCache::new(url.clone())).collect(),
+        config: config.clone(),
+        secret: vec![],
+    });
+
+    axum::Router::new()
+        .route("/v1/boot/{mac}", get(handler_boot_request))
+        .route("/file/{hash}/{*path}", get(handler_file))
+        .with_state(state)
 }
