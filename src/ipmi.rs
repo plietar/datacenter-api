@@ -1,10 +1,12 @@
+// https://www.intel.com/content/dam/www/public/us/en/documents/product-briefs/ipmi-second-gen-interface-spec-v2-rev1-1.pdf
+// https://dl.dell.com/manuals/all-products/esuprt_ser_stor_net/esuprt_cloud_products/poweredge-c6100_reference%20guide_en-us.pdf
+
 use futures::TryFutureExt;
-use ipmi_rs::connection::rmcp::Rmcp;
-use ipmi_rs::connection::CompletionCode;
 use ipmi_rs::connection::IpmiCommand;
 use ipmi_rs::connection::Message;
 use ipmi_rs::connection::NetFn;
-use ipmi_rs::connection::ParseResponseError;
+use ipmi_rs::connection::NotEnoughData;
+use ipmi_rs::rmcp::Rmcp;
 use ipmi_rs::Ipmi;
 use std::time::Duration;
 
@@ -70,14 +72,10 @@ impl Into<Message> for GetChassisStatus {
 
 impl ipmi_rs::connection::IpmiCommand for GetChassisStatus {
     type Output = ChassisStatus;
-    type Error = ();
+    type Error = NotEnoughData;
 
-    fn parse_response(
-        completion_code: CompletionCode,
-        data: &[u8],
-    ) -> Result<Self::Output, ParseResponseError<Self::Error>> {
-        Self::check_cc_success(completion_code)?;
-        ChassisStatus::from_data(data).ok_or(ParseResponseError::NotEnoughData)
+    fn parse_success_response(data: &[u8]) -> Result<Self::Output, Self::Error> {
+        ChassisStatus::from_data(data).ok_or(NotEnoughData)
     }
 }
 
@@ -100,25 +98,21 @@ impl IpmiCommand for ChassisControl {
     type Output = ();
     type Error = ();
 
-    fn parse_response(
-        completion_code: CompletionCode,
-        _data: &[u8],
-    ) -> Result<Self::Output, ParseResponseError<Self::Error>> {
-        Self::check_cc_success(completion_code)?;
+    fn parse_success_response(_data: &[u8]) -> Result<Self::Output, Self::Error> {
         Ok(())
     }
 }
 
-pub fn ipmi_do<C: IpmiCommand>(
+pub fn ipmi_do<F, T, E>(
     hostname: &str,
     username: &str,
     password: &[u8],
-    cmd: C,
-) -> impl Future<Output = anyhow::Result<C::Output>> + use<C>
+    f: F,
+) -> impl Future<Output = anyhow::Result<T>> + use<F, T, E>
 where
-    C: Send + 'static,
-    C::Output: Send + 'static,
-    C::Error: Send + Sync + 'static + std::fmt::Debug,
+    F: FnOnce(&mut Ipmi<Rmcp>) -> Result<T, E> + Send + 'static,
+    T: Send + 'static,
+    E: Into<anyhow::Error> + Send + Sync,
 {
     let hostname = hostname.to_owned();
     let username = username.to_owned();
@@ -129,9 +123,7 @@ where
             .map_err(|e| anyhow::anyhow!("{:?}", e))?;
 
         let mut ipmi = Ipmi::new(rmcp);
-        let result = ipmi
-            .send_recv(cmd)
-            .map_err(|e| anyhow::anyhow!("{:?}", e))?;
+        let result = f(&mut ipmi).map_err(Into::into)?;
         Ok(result)
     })
     .unwrap_or_else(|e: tokio::task::JoinError| panic!("ipmi command panicked: {:?}", e))

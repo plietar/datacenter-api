@@ -10,7 +10,12 @@
       packages.default = pkgs.rustPlatform.buildRustPackage {
         name = "datacenter-api";
         src = ./.;
-        cargoLock.lockFile = ./Cargo.lock;
+        cargoLock = {
+          lockFile = ./Cargo.lock;
+          outputHashes = {
+            "ipmi-rs-0.4.0" = "sha256-+rga5BH0HNyVSk0eUl3hC0aerkpf6Vr55B3fhuo40e0=";
+          };
+        };
 
         postConfigure = ''
           cp -rT ${self'.packages.web} web/dist

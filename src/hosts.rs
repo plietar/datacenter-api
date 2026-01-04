@@ -9,10 +9,13 @@ use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use ipmi_rs::sensor_event::GetSensorReading;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HostState {
     power_is_on: bool,
     power_restore_policy: String,
+    sensors: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,6 +53,48 @@ pub struct HostList {
     hosts: HashMap<String, Either<HostState, Error>>,
 }
 
+use ipmi_rs::Ipmi;
+use ipmi_rs::rmcp::Rmcp;
+use ipmi_rs::sensor_event::ThresholdReading;
+use ipmi_rs::storage::sdr::Record;
+use ipmi_rs::storage::sdr::event_reading_type_code::EventReadingTypeCodes;
+
+fn read_host_state(ipmi: &mut Ipmi<Rmcp>) -> anyhow::Result<HostState> {
+    let chassis = ipmi
+        .send_recv(GetChassisStatus)
+        .map_err(|e| anyhow::anyhow!("{:?}", e))?;
+    let sensors: Vec<_> = ipmi.sdrs().collect();
+
+    let extract_sensor = |s: &Record| {
+        let common = s.common_data()?;
+        if common.event_reading_type_code != EventReadingTypeCodes::Threshold {
+            return None;
+        }
+
+        let cmd = GetSensorReading::for_sensor_key(&common.key);
+        let raw = ipmi
+            .send_recv(cmd)
+            .map_err(|e| anyhow::anyhow!("{:?}", e))
+            .ok()?;
+        let reading = ThresholdReading::from(&raw);
+
+        let display = s.full_sensor()?.display_reading(reading.reading?)?;
+        Some((s.id()?.to_string(), display))
+    };
+
+    let sensor_values = sensors.iter().filter_map(extract_sensor).collect();
+
+    Ok(HostState {
+        power_is_on: chassis.power_is_on,
+        power_restore_policy: match chassis.power_restore_policy {
+            PowerRestorePolicy::AlwaysOn => "always-on".to_owned(),
+            PowerRestorePolicy::AlwaysOff => "always-off".to_owned(),
+            PowerRestorePolicy::Previous => "previous".to_owned(),
+        },
+        sensors: sensor_values,
+    })
+}
+
 pub async fn ipmi_hosts_handler(State(config): State<Config>) -> Json<HostList> {
     let hosts = stream::iter(config.host)
         .map(|(hostname, host)| {
@@ -57,16 +102,8 @@ pub async fn ipmi_hosts_handler(State(config): State<Config>) -> Json<HostList> 
                 &host.address,
                 &config.ipmi.username,
                 config.ipmi.password.as_ref().unwrap().as_bytes(),
-                GetChassisStatus,
+                read_host_state,
             )
-            .map_ok(move |response| HostState {
-                power_is_on: response.power_is_on,
-                power_restore_policy: match response.power_restore_policy {
-                    PowerRestorePolicy::AlwaysOn => "always-on".to_owned(),
-                    PowerRestorePolicy::AlwaysOff => "always-off".to_owned(),
-                    PowerRestorePolicy::Previous => "previous".to_owned(),
-                },
-            })
             .map_err(|e| Error {
                 error: format!("{:?}", e),
             })
@@ -98,7 +135,7 @@ pub async fn ipmi_host_put_handler(
             &host.address,
             &config.ipmi.username,
             config.ipmi.password.as_ref().unwrap().as_bytes(),
-            cmd,
+            move |ipmi| ipmi.send_recv(cmd).map_err(|e| anyhow::anyhow!("{:?}", e)),
         )
         .await
         .unwrap();

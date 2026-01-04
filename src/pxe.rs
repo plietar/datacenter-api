@@ -82,7 +82,10 @@ async fn fetch_nar(
 
     let mut data = Vec::with_capacity(narinfo.nar_size as usize);
 
-    let reader = StreamReader::new(r.bytes_stream().map_err(|e| -> std::io::Error { panic!("{:?}", e) }));
+    let reader = StreamReader::new(
+        r.bytes_stream()
+            .map_err(|e| -> std::io::Error { panic!("{:?}", e) }),
+    );
     let mut decoder = ZstdDecoder::new(reader);
     decoder.read_to_end(&mut data).await?;
 

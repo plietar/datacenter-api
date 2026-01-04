@@ -14,6 +14,8 @@ use crate::pxe::{pxe_boot_handler, pxe_file_handler};
 #[folder = "web/dist"]
 struct Assets;
 
+use tower_http::cors::{self, CorsLayer};
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let config = std::fs::read("config.toml")?;
@@ -24,11 +26,13 @@ async fn main() -> anyhow::Result<()> {
         (None, Some(path)) => {
             let password = std::fs::read_to_string(path)?;
             config.ipmi.password = password.trim_end_matches('\n').to_owned().into();
-        },
+        }
         (None, None) => anyhow::bail!("Either `password` or `password_file` must be provided"),
         (Some(_), Some(_)) => anyhow::bail!("Cannot set both `password` and `password_file`"),
     }
 
+    let cors = CorsLayer::new()
+        .allow_origin(cors::Any);
 
     let serve_assets = axum_embed::ServeEmbed::<Assets>::new();
     let app = Router::new()
@@ -37,6 +41,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/hosts", get(ipmi_hosts_handler))
         .route("/host/{hostname}", put(ipmi_host_put_handler))
         .fallback_service(serve_assets)
+        .layer(cors)
         .with_state(config);
 
     let port: u16 = std::env::var("PORT")
