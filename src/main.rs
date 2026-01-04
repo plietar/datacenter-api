@@ -7,6 +7,8 @@ use axum::Router;
 use axum::routing::{get, put};
 use clap::Parser;
 use std::path::PathBuf;
+use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
+use tracing::Level;
 
 use crate::config::Config;
 use crate::hosts::{ipmi_host_put_handler, ipmi_hosts_handler};
@@ -33,6 +35,8 @@ struct Cli {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt().init();
+
     let args = Cli::parse();
 
     let config = std::fs::read(args.config)?;
@@ -54,7 +58,12 @@ async fn main() -> anyhow::Result<()> {
         .route("/pxe/file/{hash}/{*path}", get(pxe_file_handler))
         .route("/hosts", get(ipmi_hosts_handler))
         .route("/host/{hostname}", put(ipmi_host_put_handler))
-        .fallback_service(serve_assets);
+        .fallback_service(serve_assets)
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
+                .on_response(DefaultOnResponse::new().level(Level::INFO)),
+        );
 
     if args.cors_allow_all {
         app = app.layer(CorsLayer::new().allow_origin(cors::Any));

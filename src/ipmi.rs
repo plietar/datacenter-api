@@ -118,7 +118,7 @@ where
     let username = username.to_owned();
     let password = password.to_owned();
     tokio::task::spawn_blocking(move || {
-        let mut rmcp = Rmcp::new((hostname.as_ref(), 623), Duration::from_secs(5)).unwrap();
+        let mut rmcp = Rmcp::new((hostname.as_ref(), 623), Duration::from_secs(1)).unwrap();
         rmcp.activate(true, Some(&username), Some(&password))
             .map_err(|e| anyhow::anyhow!("{:?}", e))?;
 
