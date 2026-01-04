@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.100"
-async-compression = { version = "0.4.36", features = ["tokio", "zstd"] }
+async-compression = { version = "0.4.36", features = ["tokio", "xz", "zstd"] }
 axum = { version = "0.8.8", features = ["macros"] }
 axum-embed = "0.1.0"
 camino = "1.2.2"

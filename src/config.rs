@@ -1,10 +1,12 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use url::Url;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Pxe {
-    pub cache: String,
+    pub caches: Vec<Url>,
+    pub cachix: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

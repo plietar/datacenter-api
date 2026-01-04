@@ -1,3 +1,4 @@
+mod binary_cache;
 mod config;
 mod hosts;
 mod ipmi;
