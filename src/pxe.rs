@@ -171,8 +171,8 @@ pub async fn pxe_boot_handler(
 
     Json(serde_json::json! ({
         "cmdline": String::from_utf8(cmdline).unwrap().trim(),
-        "kernel": format!("/pxe/file/{hash}/kernel"),
-        "initrd": format!("/pxe/file/{hash}/initrd"),
+        "kernel": format!("/pxe/file/{hash}/bzImage"),
+        "initrd": [format!("/pxe/file/{hash}/initrd")],
     }))
 }
 
