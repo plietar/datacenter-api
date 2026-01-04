@@ -2,12 +2,12 @@
 // https://dl.dell.com/manuals/all-products/esuprt_ser_stor_net/esuprt_cloud_products/poweredge-c6100_reference%20guide_en-us.pdf
 
 use futures::TryFutureExt;
+use ipmi_rs::Ipmi;
 use ipmi_rs::connection::IpmiCommand;
 use ipmi_rs::connection::Message;
 use ipmi_rs::connection::NetFn;
 use ipmi_rs::connection::NotEnoughData;
 use ipmi_rs::rmcp::Rmcp;
-use ipmi_rs::Ipmi;
 use std::time::Duration;
 
 #[derive(Copy, Clone, Debug)]
