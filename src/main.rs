@@ -6,6 +6,7 @@ mod pxe;
 
 use axum::Router;
 use axum::routing::{get, put};
+use axum_extra::middleware::option_layer;
 use clap::Parser;
 use std::path::PathBuf;
 use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
@@ -53,7 +54,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let serve_assets = axum_embed::ServeEmbed::<Assets>::new();
-    let mut app = Router::new()
+    let app = Router::new()
         .route("/hosts", get(ipmi_hosts_handler))
         .route("/host/{hostname}", put(ipmi_host_put_handler))
         .nest("/pxe", pxe::router(config.clone()))
@@ -62,12 +63,12 @@ async fn main() -> anyhow::Result<()> {
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
                 .on_response(DefaultOnResponse::new().level(Level::INFO)),
-        );
-
-    if args.cors_allow_all {
-        app = app.layer(CorsLayer::new().allow_origin(cors::Any));
-    }
-    let app = app.with_state(config);
+        )
+        .layer(option_layer(
+            args.cors_allow_all
+                .then(|| CorsLayer::new().allow_origin(cors::Any)),
+        ))
+        .with_state(config);
 
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", args.port)).await?;
     println!("listening on {}", listener.local_addr().unwrap());
