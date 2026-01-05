@@ -2,6 +2,7 @@ mod binary_cache;
 mod config;
 mod hosts;
 mod ipmi;
+mod nar;
 mod pxe;
 
 use axum::Router;

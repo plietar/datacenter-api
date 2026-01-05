@@ -13,12 +13,12 @@ base64 = "0.22.1"
 camino = "1.2.2"
 clap = { version = "4.5.54", features = ["derive", "env"] }
 connection-pool = "0.3.7"
+derive_more = { version = "2.1.1", features = ["debug"] }
 either = { version = "1.15.0", features = ["serde"] }
 futures = "0.3.31"
 hmac = "0.12.1"
 http = "1.4.0"
 ipmi-rs = "0.4.0"
-nix-nar = "0.3.1"
 rand = "0.9.2"
 regex = "1.12.2"
 reqwest = { version = "0.13.1", features = ["json", "stream"] }

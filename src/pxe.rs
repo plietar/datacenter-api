@@ -1,5 +1,6 @@
 use crate::binary_cache::{self, BinaryCache};
 use crate::config::Config;
+use crate::nar;
 
 use anyhow::{anyhow, bail};
 use axum::Json;
@@ -15,7 +16,6 @@ use rand::RngCore;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
-use std::io::Read;
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
 use url::Url;
@@ -95,30 +95,23 @@ async fn download_file(
     loop {
         println!("Downloading {hash}/{path}");
 
-        let mut nar = binary_cache::download(client, caches, &hash).await?;
-        let mut buf = Vec::new();
-        nar.read_to_end(&mut buf).await?;
+        let nar = binary_cache::download(client, caches, &hash).await?;
+        let mut reader = nar::Reader::new(nar);
 
-        let decoder = nix_nar::Decoder::new(&buf[..])?;
+        let entry = nar::find(&mut reader, &path)
+            .await?
+            .ok_or_else(|| anyhow!("cmdline file missing from NAR"))?;
 
-        let Some(entry) = decoder
-            .entries()?
-            .filter_map(|e| e.ok())
-            .find(|e| e.path.as_ref() == Some(&path))
-        else {
-            return Err(anyhow!("file does not exist").into());
-        };
-
-        match entry.content {
-            nix_nar::Content::Directory => {
+        match entry.contents {
+            nar::Contents::Directory => {
                 return Err(anyhow!("unexpected directory").into());
             }
-            nix_nar::Content::Symlink { target } => {
+            nar::Contents::Symlink { target } => {
                 (hash, path) = parse_store_path(&target)?;
             }
-            nix_nar::Content::File { mut data, size, .. } => {
+            nar::Contents::Regular { mut data, size, .. } => {
                 let mut buffer = Vec::with_capacity(size as usize);
-                data.read_to_end(&mut buffer)?;
+                data.read_to_end(&mut buffer).await?;
                 return Ok(buffer);
             }
         }
@@ -153,12 +146,11 @@ impl PxeState {
     }
 }
 
+#[axum::debug_handler]
 async fn handler_boot_request(
     Path(mac): Path<String>,
     State(state): State<Pxe>,
 ) -> Result<ErasedJson, PxeError> {
-    let client = reqwest::Client::new();
-
     let url = Url::parse("https://app.cachix.org/api/v1/cache/")
         .unwrap()
         .join(&format!("{}/", &state.config.pxe.cachix))
@@ -168,7 +160,7 @@ async fn handler_boot_request(
         return Err(PxeError::UnknownHost(mac));
     };
 
-    let hash = find_cachix_pin(&client, &url, hostname).await?;
+    let hash = find_cachix_pin(&state.client, &url, hostname).await?;
     let cmdline = download_file(&state.client, &state.caches, &hash, "cmdline").await?;
 
     Ok(json! ({
