@@ -3,7 +3,8 @@ use async_compression::tokio::bufread::{XzDecoder, ZstdDecoder};
 use futures::TryStreamExt as _;
 use serde::Deserialize;
 use std::collections::HashMap;
-use tokio::io::AsyncReadExt as _;
+use std::pin::Pin;
+use tokio::io::AsyncRead;
 use tokio_util::io::StreamReader;
 use url::Url;
 
@@ -73,29 +74,17 @@ impl BinaryCache {
         &self,
         client: &reqwest::Client,
         narinfo: &NarInfo,
-    ) -> anyhow::Result<Vec<u8>> {
+    ) -> anyhow::Result<impl AsyncRead + Send + use<>> {
         let r = client.get(self.url.join(&narinfo.url)?).send().await?;
         r.error_for_status_ref()?;
 
-        let mut data = Vec::with_capacity(narinfo.nar_size as usize);
-
-        let mut reader = StreamReader::new(
-            r.bytes_stream()
-                .map_err(|e| -> std::io::Error { panic!("{:?}", e) }),
-        );
+        let stream = r.bytes_stream().map_err(std::io::Error::other);
+        let reader = StreamReader::new(stream);
 
         match narinfo.compression.as_str() {
-            "none" => {
-                reader.read_to_end(&mut data).await?;
-            }
-            "xz" => {
-                let mut decoder = XzDecoder::new(reader);
-                decoder.read_to_end(&mut data).await?;
-            }
-            "zstd" => {
-                let mut decoder = ZstdDecoder::new(reader);
-                decoder.read_to_end(&mut data).await?;
-            }
+            "none" => Ok(Box::pin(reader) as Pin<Box<dyn AsyncRead + Send>>),
+            "xz" => Ok(Box::pin(XzDecoder::new(reader))),
+            "zstd" => Ok(Box::pin(ZstdDecoder::new(reader))),
             "bzip2" | "gzip" => anyhow::bail!(
                 "Compression method {} is not implemented yet",
                 narinfo.compression
@@ -104,11 +93,13 @@ impl BinaryCache {
                 anyhow::bail!("Unsupported compression type: {}", narinfo.compression);
             }
         }
-
-        Ok(data)
     }
 
-    pub async fn download(&self, client: &reqwest::Client, hash: &str) -> anyhow::Result<Vec<u8>> {
+    pub async fn download(
+        &self,
+        client: &reqwest::Client,
+        hash: &str,
+    ) -> anyhow::Result<impl AsyncRead + Send + use<>> {
         println!("Downloading {hash} from {}", self.url);
 
         let narinfo = self.fetch_narinfo(client, hash).await?;
@@ -121,7 +112,7 @@ pub async fn download(
     client: &reqwest::Client,
     caches: &[BinaryCache],
     hash: &str,
-) -> anyhow::Result<Vec<u8>> {
+) -> anyhow::Result<impl AsyncRead + Send + use<>> {
     let mut error = anyhow::anyhow!("No configured binary cache");
     for c in caches {
         match c.download(client, hash).await {

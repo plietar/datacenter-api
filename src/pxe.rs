@@ -1,6 +1,5 @@
 use crate::binary_cache::{self, BinaryCache};
 use crate::config::Config;
-use rand::RngCore;
 
 use anyhow::{anyhow, bail};
 use axum::Json;
@@ -12,11 +11,13 @@ use axum_extra::{json, response::ErasedJson};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use hmac::{Hmac, Mac};
 use http::StatusCode;
+use rand::RngCore;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use std::io::Read;
 use std::sync::Arc;
+use tokio::io::AsyncReadExt;
 use url::Url;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -94,8 +95,11 @@ async fn download_file(
     loop {
         println!("Downloading {hash}/{path}");
 
-        let nar = binary_cache::download(client, caches, &hash).await?;
-        let decoder = nix_nar::Decoder::new(&nar[..])?;
+        let mut nar = binary_cache::download(client, caches, &hash).await?;
+        let mut buf = Vec::new();
+        nar.read_to_end(&mut buf).await?;
+
+        let decoder = nix_nar::Decoder::new(&buf[..])?;
 
         let Some(entry) = decoder
             .entries()?
@@ -170,7 +174,7 @@ async fn handler_boot_request(
     Ok(json! ({
         "cmdline": String::from_utf8(cmdline)?.trim(),
         "kernel": state.file_url(&hash, "bzImage"),
-        "initrd": state.file_url(&hash, "initrd"),
+        "initrd": [state.file_url(&hash, "initrd")],
     }))
 }
 
