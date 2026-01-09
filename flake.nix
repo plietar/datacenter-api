@@ -1,26 +1,24 @@
 {
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/25.11";
+    crane.url = "github:ipetkov/crane";
     flake-parts.url = "github:hercules-ci/flake-parts";
   };
 
   outputs = inputs: inputs.flake-parts.lib.mkFlake { inherit inputs; } {
     systems = [ "x86_64-linux" ];
     perSystem = { pkgs, self', ... }: {
-      packages.default = pkgs.rustPlatform.buildRustPackage {
-        name = "datacenter-api";
-        src = ./.;
-        cargoLock = {
-          lockFile = ./Cargo.lock;
-          outputHashes = {
-            "ipmi-rs-0.4.0" = "sha256-+rga5BH0HNyVSk0eUl3hC0aerkpf6Vr55B3fhuo40e0=";
-          };
+      packages.default =
+        let craneLib = inputs.crane.mkLib pkgs;
+        in craneLib.buildPackage {
+          name = "datacenter-api";
+          src = craneLib.cleanCargoSource ./.;
+          checkInputs = [ pkgs.nix ];
+          preConfigure = ''
+            mkdir -p web
+            cp -rT ${self'.packages.web} web/dist
+          '';
         };
-
-        postConfigure = ''
-          cp -rT ${self'.packages.web} web/dist
-        '';
-      };
 
       packages.web = pkgs.buildNpmPackage {
         name = "datacenter-web";

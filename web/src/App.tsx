@@ -29,13 +29,10 @@ function SensorRow({ name, value }: {name: string, value: string}) {
 function HostRow({ hostname, data }: {hostname: string, data: any}) {
   const [open, setOpen] = React.useState(false);
 
-  console.log(data.sensors);
-  console.log(Object.entries(data.sensors)
-                    .toSorted(([k1, _v1], [k2, _v2]) => k1.localeCompare(k2)));
   return <>
     <TableRow>
       <TableCell>
-        <IconButton aria-label="expand row" size="small" onClick={() => setOpen(!open)} >
+        <IconButton aria-label="expand row" size="small" onClick={() => setOpen(!open)} disabled={!!data.error} >
           {open ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
         </IconButton>
       </TableCell>
@@ -55,7 +52,7 @@ function HostRow({ hostname, data }: {hostname: string, data: any}) {
     </TableRow>
     <TableRow>
       <TableCell style={{ paddingBottom: 0, paddingTop: 0 }} colSpan={4}>
-        <Collapse in={open} timeout="auto">
+        {!data.error && <Collapse in={open} timeout="auto">
           <Table>
             <TableBody>
               { Object.entries(data.sensors)
@@ -63,7 +60,7 @@ function HostRow({ hostname, data }: {hostname: string, data: any}) {
                     .map(([k,v]) => <SensorRow name={k} value={v as string} key={k} />) }
             </TableBody>
           </Table>
-        </Collapse>
+        </Collapse> }
       </TableCell>
     </TableRow>
   </>;

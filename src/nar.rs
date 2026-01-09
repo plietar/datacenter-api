@@ -271,15 +271,18 @@ mod tests {
     use std::process::Stdio;
     use tempdir::TempDir;
     use tokio::process::Command;
+    use anyhow::Context as _;
 
     async fn create_nar(path: impl AsRef<OsStr>) -> anyhow::Result<impl AsyncRead> {
         let child = Command::new("nix")
             .arg("nar")
             .arg("pack")
+            .args(["--extra-experimental-features", "nix-command"])
             .arg(path)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .spawn()?;
+            .spawn()
+            .context("Could not run nix command")?;
         Ok(child.stdout.unwrap())
     }
 
