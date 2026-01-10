@@ -4,6 +4,7 @@ mod hosts;
 mod ipmi;
 mod nar;
 mod pxe;
+mod store;
 
 use axum::Router;
 use axum::routing::{get, put};

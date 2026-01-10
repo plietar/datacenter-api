@@ -1,6 +1,6 @@
 use crate::binary_cache::{self, BinaryCache};
 use crate::config::Config;
-use crate::nar;
+use crate::store::Store;
 
 use anyhow::{anyhow, bail};
 use axum::Json;
@@ -10,14 +10,15 @@ use axum::extract::{Path, State};
 use axum::response::{IntoResponse, Response};
 use axum_extra::{json, response::ErasedJson};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE};
+use camino::{Utf8Component, Utf8Path, Utf8PathBuf};
 use hmac::{Hmac, Mac};
 use http::StatusCode;
 use rand::RngCore;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
+use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::io::AsyncReadExt;
 use url::Url;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -33,18 +34,14 @@ pub struct CachixPin {
     pub last_revision: LastRevision,
 }
 
-fn parse_store_path(
-    path: impl AsRef<camino::Utf8Path>,
-) -> anyhow::Result<(String, camino::Utf8PathBuf)> {
-    let Ok(path) = path
-        .as_ref()
-        .strip_prefix(std::path::Path::new("/nix/store"))
-    else {
-        return Err(anyhow!("bad path").into());
+fn parse_store_path(path: impl AsRef<Utf8Path>) -> anyhow::Result<(String, Utf8PathBuf)> {
+    let path = path.as_ref();
+    let Ok(path) = path.strip_prefix(std::path::Path::new("/nix/store")) else {
+        return Err(anyhow!("{} is not a store path", path).into());
     };
 
     let mut components = path.components();
-    let Some(camino::Utf8Component::Normal(hashname)) = components.next() else {
+    let Some(Utf8Component::Normal(hashname)) = components.next() else {
         return Err(anyhow!("bad path").into());
     };
 
@@ -83,37 +80,42 @@ async fn find_cachix_pin(
     Ok(hash)
 }
 
+async fn download_path(state: &PxeState, hash: &str) -> anyhow::Result<PathBuf> {
+    match state.store.lookup(hash).await? {
+        Some(p) => {
+            println!("{hash} already exists in store");
+            Ok(p)
+        }
+        None => {
+            let nar = binary_cache::download(&state.client, &state.caches, &hash).await?;
+            Ok(state.store.add(hash, nar).await?)
+        }
+    }
+}
+
 async fn download_file(
-    client: &reqwest::Client,
-    caches: &[BinaryCache],
+    state: &PxeState,
     hash: &str,
-    path: impl Into<camino::Utf8PathBuf>,
+    path: impl Into<Utf8PathBuf>,
 ) -> Result<Vec<u8>, PxeError> {
     let mut hash = hash.to_owned();
     let mut path = path.into();
 
     loop {
-        println!("Downloading {hash}/{path}");
+        let base = download_path(state, &hash).await?;
+        let p = base.join(&path);
+        let metadata = tokio::fs::symlink_metadata(&p).await?;
+        if metadata.is_dir() {
+            return Err(anyhow!("{} is a directory", path).into());
+        } else if metadata.is_symlink() {
+            let target = tokio::fs::read_link(&p).await?;
+            let target = Utf8Path::from_path(&target).unwrap();
 
-        let nar = binary_cache::download(client, caches, &hash).await?;
-        let mut reader = nar::Reader::new(nar);
-
-        let entry = nar::find(&mut reader, &path)
-            .await?
-            .ok_or_else(|| anyhow!("cmdline file missing from NAR"))?;
-
-        match entry.contents {
-            nar::Contents::Directory => {
-                return Err(anyhow!("unexpected directory").into());
-            }
-            nar::Contents::Symlink { target } => {
-                (hash, path) = parse_store_path(&target)?;
-            }
-            nar::Contents::Regular { mut data, size, .. } => {
-                let mut buffer = Vec::with_capacity(size as usize);
-                data.read_to_end(&mut buffer).await?;
-                return Ok(buffer);
-            }
+            // TODO: support targets other than absolute /nix/store
+            (hash, path) = parse_store_path(&target)?;
+            println!("Following symbolic link to {hash}/{path}");
+        } else {
+            return Ok(tokio::fs::read(p).await?);
         }
     }
 }
@@ -123,6 +125,7 @@ struct PxeState {
     client: reqwest::Client,
     config: Config,
     secret: [u8; 32],
+    store: Store,
 }
 type Pxe = Arc<PxeState>;
 
@@ -161,7 +164,7 @@ async fn handler_boot_request(
     };
 
     let hash = find_cachix_pin(&state.client, &url, hostname).await?;
-    let cmdline = download_file(&state.client, &state.caches, &hash, "cmdline").await?;
+    let cmdline = download_file(&state, &hash, "cmdline").await?;
 
     Ok(json! ({
         "cmdline": String::from_utf8(cmdline)?.trim(),
@@ -234,7 +237,7 @@ async fn handler_file(
         .verify_file_url(&hash, &path, &key)
         .map_err(|_| PxeError::InvalidAuthentication)?;
 
-    let data = download_file(&state.client, &state.caches, &hash, &path).await?;
+    let data = download_file(&state, &hash, &path).await?;
     Ok(data)
 }
 
@@ -262,6 +265,7 @@ pub fn router<S>(config: Config) -> axum::Router<S> {
             .iter()
             .map(|url| BinaryCache::new(url.clone()))
             .collect(),
+        store: Store::new(&config.pxe.store),
         config: config.clone(),
         secret,
     });

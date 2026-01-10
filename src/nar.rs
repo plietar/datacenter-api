@@ -1,5 +1,7 @@
+use anyhow::Context as _;
 use anyhow::bail;
 use camino::{Utf8Path, Utf8PathBuf};
+use std::path::Path;
 use std::pin::Pin;
 use std::task::{Poll, ready};
 use tokio::io::AsyncRead;
@@ -246,32 +248,58 @@ impl<R: AsyncRead> Reader<R> {
             }
         }
     }
-}
 
-pub async fn find<'a, R: tokio::io::AsyncRead>(
-    reader: &'a mut Reader<R>,
-    path: &Utf8Path,
-) -> anyhow::Result<Option<Entry<'a, R>>> {
-    loop {
-        // https://github.com/danielhenrymantilla/polonius-the-crab.rs/issues/15
-        let reader: &mut Reader<R> = unsafe { &mut *(reader as *mut _) };
-        let Some(entry) = reader.next().await? else {
-            return Ok(None);
-        };
-        if entry.path.as_deref() == Some(path) {
-            return Ok(Some(entry));
+    pub async fn extract(&mut self, root: impl AsRef<Path>) -> anyhow::Result<()> {
+        let root = root.as_ref();
+        while let Some(entry) = self.next().await? {
+            let dst = match entry.path {
+                Some(p) => root.join(p),
+                None => root.to_owned(),
+            };
+
+            match entry.contents {
+                Contents::Regular {
+                    executable,
+                    size: _,
+                    mut data,
+                } => {
+                    let mode = if executable { 0o755 } else { 0o644 };
+                    let mut output = tokio::fs::File::options()
+                        .write(true)
+                        .create_new(true)
+                        .mode(mode)
+                        .open(&dst)
+                        .await
+                        .with_context(|| format!("Cannot create file {}", dst.display()))?;
+
+                    tokio::io::copy(&mut data, &mut output).await?;
+                }
+
+                Contents::Symlink { target } => {
+                    tokio::fs::symlink(&target, &dst).await.with_context(|| {
+                        format!("Cannot create symbolic link {}", dst.display())
+                    })?;
+                }
+
+                Contents::Directory => {
+                    tokio::fs::create_dir(&dst)
+                        .await
+                        .with_context(|| format!("Cannot create directory {}", dst.display()))?;
+                }
+            }
         }
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Context as _;
     use std::ffi::OsStr;
     use std::process::Stdio;
-    use tempdir::TempDir;
+    use tempfile::tempdir;
     use tokio::process::Command;
-    use anyhow::Context as _;
 
     async fn create_nar(path: impl AsRef<OsStr>) -> anyhow::Result<impl AsyncRead> {
         let child = Command::new("nix")
@@ -304,7 +332,7 @@ mod tests {
 
     #[tokio::test]
     async fn nar_file() -> anyhow::Result<()> {
-        let root = TempDir::new("root")?;
+        let root = tempdir()?;
         std::fs::write(root.path().join("hello.txt"), "hello").unwrap();
 
         let stream = create_nar(root.path().join("hello.txt")).await?;
@@ -317,7 +345,7 @@ mod tests {
 
     #[tokio::test]
     async fn nar_symlink() -> anyhow::Result<()> {
-        let root = TempDir::new("root")?;
+        let root = tempdir()?;
         std::os::unix::fs::symlink("/foobar", root.path().join("hello.txt"))?;
 
         let stream = create_nar(root.path().join("hello.txt")).await?;
@@ -330,7 +358,7 @@ mod tests {
 
     #[tokio::test]
     async fn nar_empty_directory() -> anyhow::Result<()> {
-        let root = TempDir::new("root")?;
+        let root = tempdir()?;
         let stream = create_nar(root.path()).await?;
         let result = enumerate_nar(stream).await?;
 
@@ -341,7 +369,7 @@ mod tests {
 
     #[tokio::test]
     async fn nar_directory() -> anyhow::Result<()> {
-        let root = TempDir::new("root")?;
+        let root = tempdir()?;
         std::fs::write(root.path().join("hello.txt"), "Hello")?;
         std::fs::create_dir(root.path().join("nested"))?;
         std::fs::write(root.path().join("nested/world.txt"), "World")?;

@@ -7,6 +7,7 @@ use url::Url;
 pub struct Pxe {
     pub caches: Vec<Url>,
     pub cachix: String,
+    pub store: PathBuf,
 }
 
 #[derive(Debug, Clone, Deserialize)]
