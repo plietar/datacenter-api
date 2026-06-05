@@ -2,12 +2,12 @@
 // https://dl.dell.com/manuals/all-products/esuprt_ser_stor_net/esuprt_cloud_products/poweredge-c6100_reference%20guide_en-us.pdf
 
 use futures::TryFutureExt;
-use ipmi_rs::Ipmi;
 use ipmi_rs::connection::IpmiCommand;
 use ipmi_rs::connection::Message;
 use ipmi_rs::connection::NetFn;
 use ipmi_rs::connection::NotEnoughData;
 use ipmi_rs::rmcp::Rmcp;
+use ipmi_rs::Ipmi;
 use std::time::Duration;
 
 #[derive(Copy, Clone, Debug)]
@@ -103,6 +103,7 @@ impl IpmiCommand for ChassisControl {
     }
 }
 
+#[tracing::instrument(skip(username, password, f))]
 pub fn ipmi_do<F, T, E>(
     hostname: &str,
     username: &str,
@@ -117,7 +118,9 @@ where
     let hostname = hostname.to_owned();
     let username = username.to_owned();
     let password = password.to_owned();
+    let span = tracing::Span::current();
     tokio::task::spawn_blocking(move || {
+        let _enter = span.enter();
         let mut rmcp = Rmcp::new((hostname.as_ref(), 623), Duration::from_secs(1)).unwrap();
         rmcp.activate(true, Some(&username), Some(&password))
             .map_err(|e| anyhow::anyhow!("{:?}", e))?;
