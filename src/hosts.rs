@@ -30,7 +30,7 @@ pub struct HostCommand {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(transparent)]
-struct Either<T, U>(#[serde(with = "either::serde_untagged")] either::Either<T, U>)
+pub struct Either<T, U>(#[serde(with = "either::serde_untagged")] either::Either<T, U>)
 where
     T: Serialize + for<'a> Deserialize<'a>,
     U: Serialize + for<'a> Deserialize<'a>;
@@ -93,6 +93,30 @@ fn read_host_state(ipmi: &mut Ipmi<Rmcp>) -> anyhow::Result<HostState> {
         },
         sensors: sensor_values,
     })
+}
+
+pub async fn ipmi_host_get_handler(
+    Path(hostname): Path<String>,
+    State(config): State<Config>,
+) -> Json<Either<HostState, Error>> {
+    let Some(host) = config.host.get(&hostname) else {
+        return Json(Either::right(Error {
+            error: "invalid host".to_string(),
+        }));
+    };
+
+    let result = ipmi_do(
+        &host.address,
+        &config.ipmi.username,
+        config.ipmi.password.as_ref().unwrap().as_bytes(),
+        read_host_state,
+    )
+    .map_err(|e| Error {
+        error: format!("{:?}", e),
+    })
+    .map_ok_or_else(Either::right, Either::left)
+    .await;
+    Json(result)
 }
 
 pub async fn ipmi_hosts_handler(State(config): State<Config>) -> Json<HostList> {

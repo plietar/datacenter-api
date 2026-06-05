@@ -16,7 +16,7 @@ use tracing::Level;
 use tracing_subscriber::EnvFilter;
 
 use crate::config::Config;
-use crate::hosts::{ipmi_host_put_handler, ipmi_hosts_handler};
+use crate::hosts::{ipmi_host_get_handler, ipmi_host_put_handler, ipmi_hosts_handler};
 
 #[derive(rust_embed::RustEmbed, Clone)]
 #[folder = "web/dist"]
@@ -62,6 +62,7 @@ async fn main() -> anyhow::Result<()> {
     let serve_assets = axum_embed::ServeEmbed::<Assets>::new();
     let app = Router::new()
         .route("/hosts", get(ipmi_hosts_handler))
+        .route("/host/{hostname}", get(ipmi_host_get_handler))
         .route("/host/{hostname}", put(ipmi_host_put_handler))
         .nest("/pxe", pxe::router(config.clone()))
         .fallback_service(serve_assets)
