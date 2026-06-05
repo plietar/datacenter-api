@@ -63,7 +63,7 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .route("/hosts", get(ipmi_hosts_handler))
         .route("/host/{hostname}", get(ipmi_host_get_handler))
-        .route("/host/{hostname}", put(ipmi_host_put_handler))
+        .route("/host/{hostname}/command", put(ipmi_host_put_handler))
         .nest("/pxe", pxe::router(config.clone()))
         .fallback_service(serve_assets)
         .layer(

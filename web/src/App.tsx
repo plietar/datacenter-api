@@ -9,7 +9,7 @@ import './App.css'
 const fetcher = (url: string) => fetch(url).then(res => res.json());
 
 async function setPowerState(hostname: string, state: boolean) {
-  await fetch(`${import.meta.env.VITE_API_URL || ""}/host/${hostname}`, {
+  await fetch(`${import.meta.env.VITE_API_URL || ""}/host/${hostname}/command`, {
     method: "PUT",
     body: JSON.stringify({ power: state }),
     headers: {
