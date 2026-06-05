@@ -13,6 +13,7 @@ use clap::Parser;
 use std::path::PathBuf;
 use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
 use tracing::Level;
+use tracing_subscriber::EnvFilter;
 
 use crate::config::Config;
 use crate::hosts::{ipmi_host_put_handler, ipmi_hosts_handler};
@@ -38,7 +39,9 @@ struct Cli {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt().init();
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .init();
 
     let args = Cli::parse();
 
@@ -73,7 +76,7 @@ async fn main() -> anyhow::Result<()> {
         .with_state(config);
 
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", args.port)).await?;
-    println!("listening on {}", listener.local_addr().unwrap());
+    tracing::info!("listening on {}", listener.local_addr().unwrap());
     axum::serve(listener, app).await?;
     Ok(())
 }

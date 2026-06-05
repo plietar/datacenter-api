@@ -32,7 +32,7 @@ tokio-util = { version = "0.7.17", features = ["io"] }
 toml = "0.9.10"
 tower-http = { version = "0.6.8", features = ["cors", "trace"] }
 tracing = "0.1.44"
-tracing-subscriber = "0.3.22"
+tracing-subscriber = { version = "0.3.22", features = ["tracing-log", "env-filter"] }
 url = "2.5.7"
 
 [patch.crates-io]
